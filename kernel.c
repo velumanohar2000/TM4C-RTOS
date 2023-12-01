@@ -71,32 +71,38 @@ semaphore semaphores[MAX_SEMAPHORES];
 #define PREEMPTION_TOGGLE       13 // When called will toggle Preemption on or off
 #define THREAD_PRIORITY         14 // When called will set priority of thread
 #define REBOOT                  15 // When called will reboot hardware
+#define GET_TASK_INFO           16 // When called will get task info
 // task
 uint8_t taskCurrent = 0;          // index of last dispatched task
 uint8_t taskCount = 0;            // total number of valid tasks
 uint8_t lastTaskRun[8] = {0};
-
+uint32_t timeCurrent = 0;
 
 // control
-bool priorityScheduler = false;    // priority (true) or round-robin (false)
+bool priorityScheduler = true;    // priority (true) or round-robin (false)
 bool priorityInheritance = false; // priority inheritance for mutexes
 bool preemption = false;          // preemption (true) or cooperative (false)
+
+//For CPU time
+bool ping = true;                   // Ping means to write in clock[0]
+uint16_t secondCounter = 0;
 
 // tcb
 #define NUM_PRIORITIES   8
 struct _tcb
 {
-    uint8_t state;                 // see STATE_ values above
-    void *pid;                     // used to uniquely identify thread (add of task fn)
-    void *spInit;                  // original top of stack
-    void *sp;                      // current stack pointer
-    uint8_t priority;              // 0=highest
-    uint8_t currentPriority;       // 0=highest (needed for pi)
-    uint32_t ticks;                // ticks until sleep complete
-    uint8_t srd[NUM_SRAM_REGIONS]; // MPU subregion disable bits
-    char name[16];                 // name of task used in ps command
-    int8_t mutex;                 // index of the mutex in use or blocking the thread
-    int8_t semaphore;             // index of the semaphore that is blocking the thread
+    uint8_t state;                  // see STATE_ values above
+    void *pid;                      // used to uniquely identify thread (add of task fn)
+    void *spInit;                   // original top of stack
+    void *sp;                       // current stack pointer
+    uint8_t priority;               // 0=highest
+    uint8_t currentPriority;        // 0=highest (needed for pi)
+    uint32_t ticks;                 // ticks until sleep complete
+    uint8_t srd[NUM_SRAM_REGIONS];  // MPU subregion disable bits
+    char name[16];                  // name of task used in ps command
+    int8_t mutex;                   // index of the mutex in use or blocking the thread
+    int8_t semaphore;               // index of the semaphore that is blocking the thread
+    uint32_t clocks[2];
 } tcb[MAX_TASKS];
 
 //-----------------------------------------------------------------------------
@@ -138,6 +144,8 @@ void initRtos(void)
         tcb[i].pid = 0;
         tcb[i].mutex = -1;
         tcb[i].semaphore = -1;
+        tcb[i].clocks[0] = 0;
+        tcb[i].clocks[1] = 0;
     }
 }
 
@@ -163,6 +171,7 @@ uint8_t rtosScheduler(void)
                 break;
         }
 
+        //Round Robin in the highest priority found
         checkTask = lastTaskRun[highestPriorityLevel];
         while(!ok)
         {
@@ -180,7 +189,7 @@ uint8_t rtosScheduler(void)
 
 
     }
-    else //ROUND ROBIN
+    else //ROUND ROBIN Scheduler
     {
         while (!ok)
         {
@@ -209,7 +218,7 @@ void startRtos(void)
     _fn fn = (_fn)tcb[taskCurrent].pid;
 
     setControlRegister(3);
-
+    WTIMER1_CTL_R |= TIMER_CTL_TAEN;                 // turn-on counter
     fn();
 }
 
@@ -341,6 +350,12 @@ void rebootSystem()
     __asm("   SVC #15");
 }
 
+void getTaskInfo(TASK_INFO *taskInfo, uint8_t taskNum)
+{
+    __asm("   SVC #16");
+
+}
+
 void initSysTickIsr()
 {
     //FIXME: Need to check if load value is correct
@@ -348,7 +363,10 @@ void initSysTickIsr()
     NVIC_ST_CURRENT_R = 0;
     NVIC_ST_CTRL_R = 0x7;  // Use system clock, Enable interrupt, enable SysTick
 }
-
+uint32_t getPID()
+{
+    return (uint32_t)tcb[taskCurrent].pid;
+}
 // REQUIRED: modify this function to add support for the system timer
 // REQUIRED: in preemptive code, add code to request task switch
 void systickIsr(void)
@@ -365,43 +383,49 @@ void systickIsr(void)
             }
         }
     }
+
+    secondCounter++;
+    if (secondCounter == 3000)
+    {
+        ping = !ping;
+
+        if (ping)
+            for (i = 0; i < taskCount; i++)
+                tcb[i].clocks[1] = 0;
+        else
+            for (i = 0; i < taskCount; i++)
+                tcb[i].clocks[0] = 0;
+
+        secondCounter = 0;
+
+        WTIMER1_TAV_R = 0;
+    }
+
+
+
     if (preemption)
         NVIC_INT_CTRL_R |= NVIC_INT_CTRL_PEND_SV;
 
+
+
 }
+
+void initWideTimer()
+{
+    SYSCTL_RCGCWTIMER_R |= SYSCTL_RCGCWTIMER_R1;     // enable timer clocks
+    _delay_cycles(3);
+
+    WTIMER1_CTL_R &= ~TIMER_CTL_TAEN;                // turn-off counter before reconfiguring
+    WTIMER1_CFG_R = 4;                               // configure as 64-bit counter (A+B only)
+
+    WTIMER1_TAMR_R = TIMER_TAMR_TAMR_1_SHOT | TIMER_TAMR_TACDIR; // configure for one shot, count up
+    WTIMER1_TAV_R = 0;                               // zero counter for first period
+}
+
 
 // REQUIRED: in coop and preemptive, modify this function to add support for task switching
 // REQUIRED: process UNRUN and READY tasks differently
-__attribute__ ((naked))void pendSvIsr(void)
-{
 
-
-//    else
-//    {
-        __asm("   MRS R0, PSP");
-        __asm("   STMDB R0!, {R4-R11, LR}");   //store register to psp
-        __asm("   MSR PSP, R0");
-
-        //putsUart0("\n***PendSV Called from OS!***\n");
-
-        tcb[taskCurrent].sp = getPSP();
-  //  }
-        taskCurrent = rtosScheduler();
-        setPSP((uint32_t)tcb[taskCurrent].sp);
-        setSramAccessWindow(tcb[taskCurrent].srd);
-
-        if (tcb[taskCurrent].state == STATE_READY)
-        {
-            popFromPsp();
-        }
-        else
-        {
-            tcb[taskCurrent].state = STATE_READY;
-            unreadyPush(0x81000000, tcb[taskCurrent].pid, 0xFFFFFFFD);
-            __asm("   BX R10");
-        }
-   // }
-}
 void stopThreadHelper(uint32_t pid)
 {
     uint8_t i = 0;
@@ -521,6 +545,41 @@ void stopThreadHelper(uint32_t pid)
         putsUart0("PID not found\n");
     }
 }
+
+void restartThreadHelper(uint32_t pid)
+{
+    uint8_t i = 0;
+    bool found = false;
+    for (i = 0; i < taskCount; i++)
+    {
+        if ((uint32_t)tcb[i].pid == pid)
+        {
+            found = true;
+            break;
+        }
+    }
+    if (found)
+    {
+        uint8_t taskToRestart = i;
+        if (tcb[taskToRestart].state == STATE_STOPPED)
+        {
+            putsUart0("Restarting ");
+            putsUart0((char*)tcb[taskToRestart].name);
+            putsUart0("\n");
+            tcb[taskToRestart].state = STATE_UNRUN;
+            tcb[taskToRestart].sp = tcb[taskToRestart].spInit;
+        }
+        else
+        {
+            putsUart0("Task Already Running\n");
+        }
+    }
+    else
+    {
+        putsUart0("PID not found\n");
+    }
+}
+
 // REQUIRED: modify this function to add support for the service call
 // REQUIRED: in preemptive code, add code to handle synchronization primitives
 void svCallIsr(void)
@@ -568,8 +627,6 @@ void svCallIsr(void)
             }
 
             NVIC_INT_CTRL_R |= NVIC_INT_CTRL_PEND_SV;
-
-            //taskSwitch = true;
         }
         break;
     }
@@ -599,9 +656,7 @@ void svCallIsr(void)
         {
             putsUart0("\n***MUTEX WAS NOT LOCKED BY YOU!***\n");
             putsUart0("\n\t***SHUTTING DOWN TASK and SWITCHING TO NEXT TASK!***\n");
-            NVIC_INT_CTRL_R |= NVIC_INT_CTRL_PEND_SV;
-
-            // taskSwitch = true;
+            stopThreadHelper((uint32_t)tcb[taskCurrent].pid);
         }
         break;
     }
@@ -713,25 +768,8 @@ void svCallIsr(void)
     case RESTART_THREAD:
     {
         uint32_t pid = (uint32_t)r0;
-        uint8_t i = 0;
-        bool found = false;
-        for (i = 0; i < taskCount; i++)
-        {
-            if ((uint32_t)tcb[i].pid == pid)
-            {
-                found = true;
-                break;
-            }
-        }
-        if (found)
-        {
-            uint8_t taskToRestart = i;
-            tcb[taskToRestart].state = STATE_UNRUN;
-        }
-        else
-        {
-            putsUart0("PID not found\n");
-        }
+        restartThreadHelper(pid);
+
         break;
     }
     case PREEMPTION_TOGGLE:
@@ -743,12 +781,17 @@ void svCallIsr(void)
     {
         uint32_t pid = (uint32_t)r0;
         uint8_t prio = (uint8_t)*(psp+1);
+
         uint8_t i = 0;
         for (i = 0; i < taskCount; i++)
         {
             if ((uint32_t)tcb[i].pid == pid)
             {
                 tcb[i].priority = prio;
+                putsUart0((char*)tcb[i].name);
+                putsUart0(" Priority Level set to ");
+                iToA(prio);
+                putsUart0("\n");
                 break;
             }
         }
@@ -756,13 +799,66 @@ void svCallIsr(void)
     }
     case REBOOT:
     {
+        uint8_t i = 0;
+        for (i = 0; i < 30; i++)
+        {
+            putsUart0("\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n");
+        }
         NVIC_APINT_R = NVIC_APINT_VECTKEY | NVIC_APINT_SYSRESETREQ;
         break;
+    }
+    case GET_TASK_INFO:
+    {
+        TASK_INFO *taskInfo = (TASK_INFO*)r0;
+        uint8_t taskNum = (uint8_t)*(psp+1);
+        stringCopy(taskInfo->name,tcb[taskNum].name);
+        taskInfo->pid = (uint32_t)tcb[taskNum].pid;
+        taskInfo->state = tcb[taskNum].state;
+        taskInfo->cpuTime = tcb[taskNum].clocks[!ping]; //TODO: FIX ME
+
+        if (taskNum == 0)
+        {
+            taskInfo->taskCount = taskCount;
+            //taskInfo->taskCount = WTIMER1_TAV_R;
+        }
+
+        break;
+
     }
     }
 }
 
-uint32_t getPID()
+__attribute__ ((naked))void pendSvIsr(void)
 {
-    return (uint32_t)tcb[taskCurrent].pid;
+    //enter pendsv, record stop time t2,
+    // Delta t = t2 - t1
+    //tcb[taskCurrent].clocks += DeltaT;
+    tcb[taskCurrent].clocks[ping] += WTIMER1_TAV_R; //- timeCurrent;
+    //    WTIMER1_CTL_R &= ~TIMER_CTL_TAEN;
+    //    WTIMER1_TAV_R = 0;
+    __asm("   MRS R0, PSP");
+    __asm("   STMDB R0!, {R4-R11, LR}");   //store register to psp
+    __asm("   MSR PSP, R0");
+
+
+    tcb[taskCurrent].sp = getPSP();
+    taskCurrent = rtosScheduler();
+    setPSP((uint32_t)tcb[taskCurrent].sp);
+    setSramAccessWindow(tcb[taskCurrent].srd);
+
+    if (tcb[taskCurrent].state == STATE_READY)
+    {
+        WTIMER1_TAV_R = 0;
+        popFromPsp();
+    }
+    else
+    {
+        tcb[taskCurrent].state = STATE_READY;
+        //timeCurrent = WTIMER1_TAV_R;
+        WTIMER1_TAV_R = 0;
+        // WTIMER1_CTL_R |= TIMER_CTL_TAEN;     //Leave Pendsv record starting time, t1
+        unreadyPush(0x81000000, tcb[taskCurrent].pid, 0xFFFFFFFD);
+        __asm("   BX R10");
+    }
 }
+

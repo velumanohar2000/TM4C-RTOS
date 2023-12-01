@@ -32,6 +32,18 @@ typedef struct _SEM_INFO
 }SEM_INFO;
 extern struct SEM_INFO semaphoreInfo;
 
+typedef struct _TASK_INFO
+{
+    char name[64];
+    uint32_t pid;
+    uint8_t state;
+    uint32_t cpuTime;
+    uint8_t taskCount;
+    uint32_t totalTime;
+}TASK_INFO;
+extern struct TASK_INFO taskInfo;
+
+
 
 void ps();
 void ipcs();

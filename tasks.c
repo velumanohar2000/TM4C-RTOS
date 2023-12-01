@@ -90,6 +90,8 @@ void initHw(void)
     setPinValue(RED_LED, 0);
     setPinValue(ORANGE_LED, 0);
 
+
+
     // Power-up flash
     setPinValue(ON_BOARD_GREEN_LED, 1);
     waitMicrosecond(250000);
@@ -193,8 +195,8 @@ void readKeys(void)
         post(keyPressed);
         if ((buttons & 1) != 0)
         {
-            setPinValue(YELLOW_LED, !getPinValue(YELLOW_LED));
             setPinValue(RED_LED, 1);
+            setPinValue(YELLOW_LED, !getPinValue(YELLOW_LED));
         }
         if ((buttons & 2) != 0)
         {
@@ -242,9 +244,7 @@ void uncooperative(void)
     {
         while (readPbs() == 8)
         {
-            setPinValue(RED_LED, 1);
         }
-        setPinValue(RED_LED, 0);
         yield();
     }
 }

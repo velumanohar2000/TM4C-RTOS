@@ -59,6 +59,7 @@ int main(void)
     initRtos(); //in kernel.h
     initSysTickIsr();
     initFaultHandlers();
+    initWideTimer();
 
     // Setup UART0 baud rate
     setUart0BaudRate(115200, 40e6);

@@ -55,8 +55,7 @@
 // REQUIRED: add processing for the shell commands through the UART here
 void shell(void)
 {
-    putsUart0("\n\nEnter Command:\n");
-
+    putsUart0("Enter Command:\n");
     while(true)
     {
         if (kbhitUart0())
@@ -155,13 +154,14 @@ void shell(void)
             }
             if (!valid)
             {
-                putsUart0("Invalid Command\n");
+                putsUart0("Invalid Command");
                 putsUart0("\n\nEnter Command:\n");
             }
             else
             {
                 putsUart0("\n\nEnter Command:\n");
             }
+            yield();
         }
         yield();
     }

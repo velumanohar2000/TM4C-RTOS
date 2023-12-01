@@ -50,5 +50,7 @@ char *getFieldString(USER_DATA *data, uint8_t fieldNumber);
 int32_t getFieldInteger(USER_DATA *data, uint8_t fieldNumber);
 bool isCommand(USER_DATA *data, const char strCommand[], uint8_t minArguments);
 bool strCmp(char *string, const char strCommand[]);
+void fToA(float floatValue);
+
 
 #endif

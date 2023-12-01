@@ -123,7 +123,19 @@ void iToA(uint32_t integer)
 
 }
 
+void fToA(float floatValue)
+{
+    uint8_t i = 0;
+    iToA((uint32_t)floatValue);
+    putsUart0(".");
+    float fraction = floatValue - (float)(uint32_t)floatValue;
+    for (i = 0; i < 2; i++)
+    {
+        fraction *= 10;
+    }
+    iToA((uint32_t)fraction);
 
+}
 
 // Initialize UART0
 void initUart0()

@@ -72,7 +72,8 @@ void getMutexInfo(MUTEX_INFO *mutexInfo, uint8_t mutexNumber);
 void getSemaphoreInfo(SEM_INFO *semaphoreInfo, uint8_t semNumber);
 void togglePreemption(bool preempt);
 void rebootSystem();
-
+void getTaskInfo(TASK_INFO *taskInfo, uint8_t taskNum);
+void initWideTimer();
 
 //Called from ccs
 void systickIsr(void);
